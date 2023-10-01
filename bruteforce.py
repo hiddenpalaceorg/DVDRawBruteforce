@@ -18,7 +18,9 @@ import zipfile
 import time
 import glob
 from tqdm import tqdm
-    
+
+drive_letter = ""
+
 class Logger(object):
     def __init__(self):
         self.terminal = sys.stdout
@@ -45,9 +47,21 @@ def zip_files():
     print(f"Files zipped successfully into '{zip_filename}'. Please send this zip file for analysis.")
 
 def execute_command(command):
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    output, error = process.communicate()
-    return process.returncode, output.decode('utf-8').strip(), error.decode('utf-8').strip()
+    with open('sg_raw_temp.txt', 'w') as output_file:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=output_file)
+        _, stderr = process.communicate()
+
+    stderr_str = stderr.decode('utf-8') if stderr is not None else ""
+
+    with open('sg_raw_temp.txt', 'r') as temp_file:
+        output = temp_file.read()
+    
+    if "Unaligned write command" in output:
+        print("\nTimeout occurred...rereading LBA 0 to store it onto the cache again...")
+        read_lba_0(drive_letter)
+
+    
+    return process.returncode, output.strip(), stderr_str.strip()
 
 def dvd_drive_exists(drive_letter):
     drive_path = drive_letter + ':\\'
