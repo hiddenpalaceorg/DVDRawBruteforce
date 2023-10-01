@@ -6,4 +6,9 @@ Data from LBA 0 should always start with "00 03 00 00" as the first 4 bytes of t
 
 Script has been written for use with Windows 10 x64 and Python 3.11.4.
 
+See the latest database of checked drives here:
+https://docs.google.com/spreadsheets/d/1pu3oXHRJ_qlyXrsHUyXOzD5mNp7dU8rgrfVuRBLyQFA/edit?pli=1#gid=0
+
+For submissions, feel free to e-mail the upload_me.zip to hp@hiddenpalace.org. If the .zip is too large, upload it to a 3rd party website like MediaFire or MEGA.
+
 Hidden-Palace R&D
