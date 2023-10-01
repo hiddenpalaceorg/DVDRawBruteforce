@@ -7,7 +7,8 @@ Data from LBA 0 should always start with "00 03 00 00" as the first 4 bytes of t
 Script has been written for use with Windows 10 x64 and Python 3.11.4. Requires sg_raw.exe (from sg3_utils) and Cygwin (cygsgutils2-1-47-2.dll and cygwin1.dll) to use.
 
 A standalone executable can be built with pyinstaller by using the following parameters:
-pyinstaller --clean --name="DVDRawBruteforce" -F --add-data "sg_raw.exe;." --add-data "cygsgutils2-1-47-2.dll;." --onefile bruteforce.py
+
+pyinstaller --clean --name="DVDRawBruteforce" -F --add-data "sg_raw.exe;." --add-data "cygsgutils2-1-47-2.dll;." --add-data "cygwin1.dll;." --onefile bruteforce.py
 
 See the latest database of checked drives here:
 https://docs.google.com/spreadsheets/d/1pu3oXHRJ_qlyXrsHUyXOzD5mNp7dU8rgrfVuRBLyQFA/edit?pli=1#gid=0
