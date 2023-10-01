@@ -1,5 +1,5 @@
 # Raw DVD Drive sector reading Bruteforcer
-# Version: 2023-07-09
+# Version: 2023-09-30
 # Author: ehw
 # Hidden-Palace.org R&D
 # Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. 
@@ -17,6 +17,7 @@ from datetime import datetime
 import zipfile
 import time
 import glob
+from tqdm import tqdm
     
 class Logger(object):
     def __init__(self):
@@ -60,6 +61,8 @@ def read_lba_0(drive_letter):
 def scan_for_3c_values(drive_letter):
     print("\nScanning for 3C values (THIS MAY TAKE A WHILE)...")
     discovered_files = []
+    total_iterations = 256 * 256
+    progress_bar = tqdm(total=total_iterations, desc="Processing")
 
     for xx in range(256):
         for yy in range(256):
@@ -71,19 +74,27 @@ def scan_for_3c_values(drive_letter):
              with open(filename, "rb") as file:
                  first_four_bytes = file.read(4)
              if first_four_bytes == b"\x00\x03\x00\x00":
-                 print(f"Raw sector data found with 3C {xx:02X} {yy:02X}")
+                 print(f"\nRaw sector data found with 3C {xx:02X} {yy:02X}")
                  discovered_files.append(filename)
                  command = f"sg_raw.exe -o 3c_{xx:02X}_{yy:02X}_(16128).bin -r 16128 {drive_letter}: 3c {xx:02X} {yy:02X} 00 00 00 00 3F 00 00" #make a 16kb dump for further analysis
                  return_code, _, _ = execute_command(command)
              else:
-                 print(f"Raw sector data NOT found with 3C {xx:02X} {yy:02X}")
+                 print(f"\nRaw sector data NOT found with 3C {xx:02X} {yy:02X}")
             except FileNotFoundError:
              pass
+             
+            # Update the progress bar
+            progress_bar.update(1)
+            
+    # Close the progress bar
+    progress_bar.close()
     return discovered_files
 
 def scan_for_f1_values(drive_letter):
     print("\nScanning for F1 values (THIS MAY TAKE A WHILE)...")
     discovered_files = []
+    total_iterations = 256 * 256
+    progress_bar = tqdm(total=total_iterations, desc="Processing")
 
     for xx in range(256):
         command = f"sg_raw.exe -o f1_{xx:02X}.bin -r 2384 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 09 50"
@@ -94,14 +105,20 @@ def scan_for_f1_values(drive_letter):
          with open(filename, "rb") as file:
              first_four_bytes = file.read(4)
          if first_four_bytes == b"\x00\x03\x00\x00":
-             print(f"Raw sector data found with F1 {xx:02X}")
+             print(f"\nRaw sector data found with F1 {xx:02X}")
              command = f"sg_raw.exe -o f1_{xx:02X}_(16128).bin -r 16128 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 3F 00" #make a 16kb dump for further analysis
              return_code, _, _ = execute_command(command)
              discovered_files.append(filename)
          else:
-            print(f"Raw sector data NOT found with F1 {xx:02X}")
+            print(f"\nRaw sector data NOT found with F1 {xx:02X}")
         except FileNotFoundError:
          pass
+        
+        # Update the progress bar
+        progress_bar.update(1)
+        
+    # Close the progress bar
+    progress_bar.close()
     return discovered_files
 
 def test_e7_command(drive_letter):
