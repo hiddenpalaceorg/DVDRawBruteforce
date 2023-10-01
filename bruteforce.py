@@ -1,5 +1,5 @@
 # Raw DVD Drive sector reading Bruteforcer
-# Version: 2023-09-30
+# Version: 2023-10-01
 # Author: ehw
 # Hidden-Palace.org R&D
 # Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. 
@@ -66,7 +66,7 @@ def scan_for_3c_values(drive_letter):
 
     for xx in range(256):
         for yy in range(256):
-            command = f"sg_raw.exe -o 3c_{xx:02X}_{yy:02X}.bin -r 2384 {drive_letter}: 3c {xx:02X} {yy:02X} 00 00 00 00 09 50 00"
+            command = f"sg_raw.exe -o 3c_{xx:02X}_{yy:02X}.bin -r 2384 {drive_letter}: 3c {xx:02X} {yy:02X} 00 00 00 00 09 50 00 --timeout=20"
             return_code, _, _ = execute_command(command)
 
             filename = f"3c_{xx:02X}_{yy:02X}.bin"
@@ -76,7 +76,7 @@ def scan_for_3c_values(drive_letter):
              if first_four_bytes == b"\x00\x03\x00\x00":
                  print(f"\nRaw sector data found with 3C {xx:02X} {yy:02X}")
                  discovered_files.append(filename)
-                 command = f"sg_raw.exe -o 3c_{xx:02X}_{yy:02X}_(16128).bin -r 16128 {drive_letter}: 3c {xx:02X} {yy:02X} 00 00 00 00 3F 00 00" #make a 16kb dump for further analysis
+                 command = f"sg_raw.exe -o 3c_{xx:02X}_{yy:02X}_(16128).bin -r 16128 {drive_letter}: 3c {xx:02X} {yy:02X} 00 00 00 00 3F 00 00 --timeout=20" #make a 16kb dump for further analysis
                  return_code, _, _ = execute_command(command)
              else:
                  print(f"\nRaw sector data NOT found with 3C {xx:02X} {yy:02X}")
@@ -93,11 +93,11 @@ def scan_for_3c_values(drive_letter):
 def scan_for_f1_values(drive_letter):
     print("\nScanning for F1 values (THIS MAY TAKE A WHILE)...")
     discovered_files = []
-    total_iterations = 256 * 256
+    total_iterations = 256
     progress_bar = tqdm(total=total_iterations, desc="Processing")
 
     for xx in range(256):
-        command = f"sg_raw.exe -o f1_{xx:02X}.bin -r 2384 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 09 50"
+        command = f"sg_raw.exe -o f1_{xx:02X}.bin -r 2384 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 09 50 --timeout=20"
         return_code, _, _ = execute_command(command)
 
         filename = f"f1_{xx:02X}.bin"
@@ -106,7 +106,7 @@ def scan_for_f1_values(drive_letter):
              first_four_bytes = file.read(4)
          if first_four_bytes == b"\x00\x03\x00\x00":
              print(f"\nRaw sector data found with F1 {xx:02X}")
-             command = f"sg_raw.exe -o f1_{xx:02X}_(16128).bin -r 16128 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 3F 00" #make a 16kb dump for further analysis
+             command = f"sg_raw.exe -o f1_{xx:02X}_(16128).bin -r 16128 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 3F 00 --timeout=20" #make a 16kb dump for further analysis
              return_code, _, _ = execute_command(command)
              discovered_files.append(filename)
          else:
@@ -123,7 +123,7 @@ def scan_for_f1_values(drive_letter):
 
 def test_e7_command(drive_letter):
     print("\nTesting if E7 SCSI command (Hitachi Debug - Type 3/4 NO OFFSET) is supported...")
-    command = f"sg_raw.exe -o e7.bin -r 2064 {drive_letter}: e7 48 49 54 01 00 80 00 00 00 80 10"
+    command = f"sg_raw.exe -o e7.bin -r 2064 {drive_letter}: e7 48 49 54 01 00 80 00 00 00 80 10 --timeout=20"
     return_code, _, _ = execute_command(command)
     try:
      with open("e7.bin", "rb") as file:
@@ -139,7 +139,7 @@ def test_e7_command(drive_letter):
 def test_3e_read_long_10(drive_letter):
     print("\nTesting if 3E SCSI Command (READ LONG (10)) is supported...")
     # xfer_len=2384 (0x950), lba=0 (0x0), correct=0 (dont correct ecc)
-    command = f"sg_raw.exe -o 3e.bin -r 2384 {drive_letter}: 3e 00 00 00 00 00 00 09 50 00"
+    command = f"sg_raw.exe -o 3e.bin -r 2384 {drive_letter}: 3e 00 00 00 00 00 00 09 50 00 --timeout=20"
     return_code, _, _ = execute_command(command)
     try:
      with open("3e.bin", "rb") as file:
@@ -155,7 +155,7 @@ def test_3e_read_long_10(drive_letter):
 def test_9e_read_long_16(drive_letter):
     print("\nTesting if 9E SCSI Command (READ LONG (16)) is supported...")
     # xfer_len=2384 (0x950), lba=0 (0x0), correct=0 (dont correct ecc)
-    command = f"sg_raw.exe -o 9e.bin -r 2384 {drive_letter}: 9e 11 00 00 00 00 00 00 00 00 00 00 09 50 00 00"
+    command = f"sg_raw.exe -o 9e.bin -r 2384 {drive_letter}: 9e 11 00 00 00 00 00 00 00 00 00 00 09 50 00 00 --timeout=20"
     return_code, _, _ = execute_command(command)
     try:
      with open("9e.bin", "rb") as file:
@@ -191,7 +191,7 @@ def get_dvd_drive_info(drive_letter):
 
 def get_mode_sense_page01(drive_letter):
     # Step 1: Execute sg_raw.exe command
-    command = f'sg_raw.exe -o 5a_mode_sense_page01.bin -r 16 {drive_letter}: 5A 00 01 00 00 00 00 00 0F 00'
+    command = f'sg_raw.exe -o 5a_mode_sense_page01.bin -r 16 {drive_letter}: 5A 00 01 00 00 00 00 00 0F 00 --timeout=20'
     subprocess.run(command, shell=True)
 
     # Step 2: Open and read the binary file
@@ -277,7 +277,7 @@ def main():
     start_time = time.time()
     # Start
     print("Raw DVD Drive sector reading Bruteforcer")
-    print("Version: 2023-06-17")
+    print("Version: 2023-10-01")
     print("Author: ehw (Hidden-Palace.org R&D)")
     print("Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. It determines this data by storing LBA 0 onto the cache and by bruteforcing various known commands that expose the cache in order to find the data that's stored. Data from LBA 0 should always start with '00 03 00 00' as the first 4 bytes of the sector. This denotes the PSN of 30000.\n") 
 
