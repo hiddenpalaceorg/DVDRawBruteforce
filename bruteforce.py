@@ -1,10 +1,10 @@
 # Raw DVD Drive sector reading Bruteforcer
-# Version: 2023-10-01a
+# Version: 2023-11-26
 # Author: ehw
 # Hidden-Palace.org R&D
 # Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. 
 #              It determines this data by storing LBA 0 onto the cache and by bruteforcing various known commands that expose the cache in order to find the data that's stored.
-#              Data from LBA 0 should always start with "00 03 00 00" as the first 4 bytes of the sector. This denotes the PSN of 30000.
+#              Data from LBA 0 should always start with "03 00 00" as the first 4 bytes of the sector. This denotes the PSN of 30000.
 # Notes: Script has been written for use with Windows 10 x64 and Python 3.11.4.
 
 import subprocess
@@ -76,30 +76,33 @@ def scan_for_3c_values(drive_letter):
     print("\nScanning for 3C values (THIS MAY TAKE A WHILE)...")
     discovered_files = []
     total_iterations = 256 * 256
-    progress_bar = tqdm(total=total_iterations, desc="Processing")
+    progress_bar = tqdm(total=total_iterations, desc="Processing", position=0)
 
     for xx in range(256):
         for yy in range(256):
+            hex_combination = f"{xx:02X} {yy:02X}"
+            progress_bar.set_postfix(combination=hex_combination)
             command = f"sg_raw.exe -o 3c_{xx:02X}_{yy:02X}.bin -r 2384 {drive_letter}: 3c {xx:02X} {yy:02X} 00 00 00 00 09 50 00 --timeout=20"
             return_code, _, _ = execute_command(command)
 
             filename = f"3c_{xx:02X}_{yy:02X}.bin"
             try:
-             with open(filename, "rb") as file:
-                 first_four_bytes = file.read(4)
-             if first_four_bytes == b"\x00\x03\x00\x00":
-                 print(f"\nRaw sector data found with 3C {xx:02X} {yy:02X}")
-                 discovered_files.append(filename)
-                 command = f"sg_raw.exe -o 3c_{xx:02X}_{yy:02X}_(16128).bin -r 16128 {drive_letter}: 3c {xx:02X} {yy:02X} 00 00 00 00 3F 00 00 --timeout=20" #make a 16kb dump for further analysis
-                 return_code, _, _ = execute_command(command)
-             else:
-                 print(f"\nRaw sector data NOT found with 3C {xx:02X} {yy:02X}")
+                with open(filename, "rb") as file:
+                    file.seek(1)  # Move the file pointer to offset 0x1
+                    bytes_at_offset_1 = file.read(3)
+                if bytes_at_offset_1 == b"\x03\x00\x00":
+                    print(f"\nRaw sector data found with 3C {xx:02X} {yy:02X}")
+                    discovered_files.append(filename)
+                    command = f"sg_raw.exe -o 3c_{xx:02X}_{yy:02X}_(16128).bin -r 16128 {drive_letter}: 3c {xx:02X} {yy:02X} 00 00 00 00 3F 00 00 --timeout=20"  # make a 16kb dump for further analysis
+                    return_code, _, _ = execute_command(command)
+                else:
+                    print(f"\nRaw sector data NOT found with 3C {xx:02X} {yy:02X}")
             except FileNotFoundError:
-             pass
-             
+                pass
+
             # Update the progress bar
             progress_bar.update(1)
-            
+
     # Close the progress bar
     progress_bar.close()
     return discovered_files
@@ -108,29 +111,33 @@ def scan_for_f1_values(drive_letter):
     print("\nScanning for F1 values (THIS MAY TAKE A WHILE)...")
     discovered_files = []
     total_iterations = 256
-    progress_bar = tqdm(total=total_iterations, desc="Processing")
+    progress_bar = tqdm(total=total_iterations, desc="Processing", position=0)
 
     for xx in range(256):
+        hex_combination = f"{xx:02X}"
+        progress_bar.set_postfix(combination=hex_combination)
+
         command = f"sg_raw.exe -o f1_{xx:02X}.bin -r 2384 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 09 50 --timeout=20"
         return_code, _, _ = execute_command(command)
 
         filename = f"f1_{xx:02X}.bin"
         try:
-         with open(filename, "rb") as file:
-             first_four_bytes = file.read(4)
-         if first_four_bytes == b"\x00\x03\x00\x00":
-             print(f"\nRaw sector data found with F1 {xx:02X}")
-             command = f"sg_raw.exe -o f1_{xx:02X}_(16128).bin -r 16128 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 3F 00 --timeout=20" #make a 16kb dump for further analysis
-             return_code, _, _ = execute_command(command)
-             discovered_files.append(filename)
-         else:
-            print(f"\nRaw sector data NOT found with F1 {xx:02X}")
+            with open(filename, "rb") as file:
+                file.seek(1)  # Move the file pointer to offset 0x1
+                bytes_at_offset_1 = file.read(3)
+            if bytes_at_offset_1 == b"\x03\x00\x00":
+                print(f"\nRaw sector data found with F1 {xx:02X}")
+                command = f"sg_raw.exe -o f1_{xx:02X}_(16128).bin -r 16128 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 3F 00 --timeout=20"  # make a 16kb dump for further analysis
+                return_code, _, _ = execute_command(command)
+                discovered_files.append(filename)
+            else:
+                print(f"\nRaw sector data NOT found with F1 {xx:02X}")
         except FileNotFoundError:
-         pass
-        
+            pass
+
         # Update the progress bar
         progress_bar.update(1)
-        
+
     # Close the progress bar
     progress_bar.close()
     return discovered_files
@@ -140,15 +147,16 @@ def test_e7_command(drive_letter):
     command = f"sg_raw.exe -o e7.bin -r 2064 {drive_letter}: e7 48 49 54 01 00 80 00 00 00 80 10 --timeout=20"
     return_code, _, _ = execute_command(command)
     try:
-     with open("e7.bin", "rb") as file:
-         first_four_bytes = file.read(4)
-     if first_four_bytes == b"\x00\x03\x00\x00":
-         print("Raw sector data found with E7 (Hitachi Debug)")
-     else:
-         print("Raw sector data NOT found but a file was generated with the E7 SCSI command (Hitachi Debug)")
+        with open("e7.bin", "rb") as file:
+            file.seek(1)  # Move the file pointer to offset 0x1
+            bytes_at_offset_1 = file.read(3)
+        if bytes_at_offset_1 == b"\x03\x00\x00":
+            print("Raw sector data found with E7 (Hitachi Debug)")
+        else:
+            print("Raw sector data NOT found but a file was generated with the E7 SCSI command (Hitachi Debug)")
     except FileNotFoundError:
-         print("E7 SCSI Command (Hitachi Debug) NOT supported.")
-         pass
+        print("E7 SCSI Command (Hitachi Debug) NOT supported.")
+        pass
 
 def test_3e_read_long_10(drive_letter):
     print("\nTesting if 3E SCSI Command (READ LONG (10)) is supported...")
@@ -156,15 +164,16 @@ def test_3e_read_long_10(drive_letter):
     command = f"sg_raw.exe -o 3e.bin -r 2384 {drive_letter}: 3e 00 00 00 00 00 00 09 50 00 --timeout=20"
     return_code, _, _ = execute_command(command)
     try:
-     with open("3e.bin", "rb") as file:
-         first_four_bytes = file.read(4)
-     if first_four_bytes == b"\x00\x03\x00\x00":
-         print("Raw sector data found with 3E SCSI Command (READ LONG (10)).")         
-     else:
-         print("Raw sector data NOT found but a file was generated with the 9E SCSI Command (READ LONG (10)).")
+        with open("3e.bin", "rb") as file:
+            file.seek(1)  # Move the file pointer to offset 0x1
+            bytes_at_offset_1 = file.read(3)
+        if bytes_at_offset_1 == b"\x03\x00\x00":
+            print("Raw sector data found with 3E SCSI Command (READ LONG (10)).")
+        else:
+            print("Raw sector data NOT found but a file was generated with the 3E SCSI Command (READ LONG (10)).")
     except FileNotFoundError:
-         print("3E SCSI Command (READ LONG (10)) NOT supported")
-         pass
+        print("3E SCSI Command (READ LONG (10)) NOT supported")
+        pass
 
 def test_9e_read_long_16(drive_letter):
     print("\nTesting if 9E SCSI Command (READ LONG (16)) is supported...")
@@ -172,16 +181,17 @@ def test_9e_read_long_16(drive_letter):
     command = f"sg_raw.exe -o 9e.bin -r 2384 {drive_letter}: 9e 11 00 00 00 00 00 00 00 00 00 00 09 50 00 00 --timeout=20"
     return_code, _, _ = execute_command(command)
     try:
-     with open("9e.bin", "rb") as file:
-         first_four_bytes = file.read(4)
-
-     if first_four_bytes == b"\x00\x03\x00\x00":
-         print("Raw sector data found with 9E SCSI Command (READ LONG (16)).")
-     else:
-         print("Raw sector data NOT found but a file was generated with the 9E SCSI Command (READ LONG (16)).")
+        with open("9e.bin", "rb") as file:
+            file.seek(1)  # Move the file pointer to offset 0x1
+            bytes_at_offset_1 = file.read(3)
+        if bytes_at_offset_1 == b"\x03\x00\x00":
+            print("Raw sector data found with 9E SCSI Command (READ LONG (16)).")
+        else:
+            print("Raw sector data NOT found but a file was generated with the 9E SCSI Command (READ LONG (16)).")
     except FileNotFoundError:
-         print("9E SCSI Command (READ LONG (16)) NOT supported.")
-         pass
+        print("9E SCSI Command (READ LONG (16)) NOT supported.")
+        pass
+
 
 def get_dvd_drive_info(drive_letter):
     wmi = win32com.client.GetObject("winmgmts:")
@@ -201,7 +211,6 @@ def get_dvd_drive_info(drive_letter):
         for name, value in zip(property_names, property_values):
             print(f"{name}: {value}")
 
-        print("--------------------------------------------\n")
 
 def get_mode_sense_page01(drive_letter):
     # Step 1: Execute sg_raw.exe command
@@ -239,25 +248,28 @@ def get_mode_sense_page01(drive_letter):
         "DTE (DISABLE TRANSFER on ERROR)",
         "DCR (DISABLE CORRECTION)"
     ]
+
     for i, flag_name in enumerate(flag_names, start=1):
         bit_value = (flags_byte >> (8 - i)) & 0x01
-        print(f"\t{i}. {flag_name}: {bit_value}")
+        print(f"{i}. {flag_name.ljust(45)}: {bit_value}")
 
     # Step 8: Print READ RETRY COUNT
     read_retry_count = data[0xB]
-    print("READ RETRY COUNT:", hex(read_retry_count))
+    print(f"READ RETRY COUNT:    {hex(read_retry_count)}    ({read_retry_count})")
 
     # Step 9: Print CORRECTION SPAN
     correction_span = data[0xC]
-    print("CORRECTION SPAN:", hex(correction_span))
+    print(f"CORRECTION SPAN:     {hex(correction_span)}    ({correction_span})")
 
     # Step 10: Print HEAD OFFSET COUNT
     head_offset_count = data[0xD]
-    print("HEAD OFFSET COUNT:", hex(head_offset_count))
+    print(f"HEAD OFFSET COUNT:   {hex(head_offset_count)}    ({head_offset_count})")
 
     # Step 11: Print RESERVED (NOT USED)
     reserved_value = data[0xE]
-    print("RESERVED (NOT USED):", hex(reserved_value))
+    print(f"RESERVED (NOT USED): {hex(reserved_value)}    ({reserved_value})")
+
+
     print("-----------------------------------------------------------------------------------")
     return 0
 
@@ -272,28 +284,77 @@ def create_new_directory():
     return new_dir
 
 def calc_sector_size(file_path):
-    pattern_start = bytes.fromhex("00 03 00 00")
-    pattern_end = bytes.fromhex("00 03 00 01")
-    
+    pattern_start = bytes.fromhex("03 00 00")
+    pattern_end = bytes.fromhex("03 00 01")
+
     with open(file_path, "rb") as file:
         file_content = file.read()
-        
         start_index = file_content.find(pattern_start)
         end_index = file_content.find(pattern_end, start_index)
-        
+
         if start_index != -1 and end_index != -1:
-            bytes_found = end_index - start_index + len(pattern_end) - 4
+            # Get the first byte
+            first_byte = file_content[0]
+
+            # Print hexadecimal value
+            print(f"First Byte Hex: {hex(first_byte)}")
+
+            # Print detailed information about the bits that make up the Sector ID Information
+            format_bit = (first_byte >> 7) & 0x01
+            tracking_bit = (first_byte >> 6) & 0x01
+            reflectivity_bit = (first_byte >> 5) & 0x01
+            reserved_bit = (first_byte >> 4) & 0x01
+            area_bits = (first_byte >> 2) & 0x03
+            data_type_bit = (first_byte >> 1) & 0x01
+            layer_bit = first_byte & 0x01
+            print("Sector ID Information Flags:")
+            print(f"1. FORMAT (0 = CLV, 1 = ZONED):                                {format_bit}")
+            print(f"2. TRACKING (0 = PIT, 1 = GROOVE):                             {tracking_bit}")
+            print(f"3. REFLECTIVITY (0 = >40%, 1 = >=40%):                         {reflectivity_bit}")
+            print(f"4. RESERVED:                                                   {reserved_bit}")
+            print(f"5. AREA (00 = DATA, 01 = LEAD-IN, 10 = LEAD-OUT, 11 = MIDDLE): {bin(area_bits)}")
+            print(f"6. DATA TYPE:                                                  {data_type_bit}")
+            print(f"7. LAYER (0 = LAYER 0, 1 = LAYER 1):                           {layer_bit}")
+            print("")
+
+            bytes_found = end_index - start_index + len(pattern_end) - 3
             return bytes_found
-    
+
     return 0
+
+
+
+def get_disc_info(drive_letter):
+    print("\nAttempting to get Disc Information...")
+	# Get DMI (Disc Manufacturing Information from the DVD Lead-in area)
+    print("Getting DMI...")
+    command = f"sg_raw.exe -o disc_info_dmi.bin -r 2384 {drive_letter}: ad 00 00 00 00 00 00 04 00 04 00 00 --timeout=20"
+    return_code, _, _ = execute_command(command)
+	# Get PFI
+    print("Getting PFI...")
+    command = f"sg_raw.exe -o disc_info_pfi.bin -r 2384 {drive_letter}: ad 00 00 00 00 00 00 00 00 04 00 00 --timeout=20"
+    return_code, _, _ = execute_command(command)
+	# Get BCA
+    print("Getting BCA...")
+    command = f"sg_raw.exe -o disc_info_bca.bin -r 2384 {drive_letter}: ad 00 00 00 00 00 00 03 00 04 00 00 --timeout=20"
+    return_code, _, _ = execute_command(command)
+	# Get Copyright Info from DVD Leadin Area
+    print("Getting Copyright Info from DVD Leadin Area...")
+    command = f"sg_raw.exe -o disc_info_cpy.bin -r 2384 {drive_letter}: ad 00 00 00 00 00 00 01 00 04 00 00 --timeout=20"
+    return_code, _, _ = execute_command(command)
+	# Get Disc Key (Obfuscated by using the bus key)
+    print("Getting Disc Key (Obfuscated by using the bus key)...\n")
+    command = f"sg_raw.exe -o disc_info_key.bin -r 2384 {drive_letter}: ad 00 00 00 00 00 00 02 00 04 00 00 --timeout=20"
+    return_code, _, _ = execute_command(command)
+
 
 def main():
     start_time = time.time()
     # Start
     print("Raw DVD Drive sector reading Bruteforcer")
-    print("Version: 2023-10-01a")
+    print("Version: 2023-11-26")
     print("Author: ehw (Hidden-Palace.org R&D)")
-    print("Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. It determines this data by storing LBA 0 onto the cache and by bruteforcing various known commands that expose the cache in order to find the data that's stored. Data from LBA 0 should always start with '00 03 00 00' as the first 4 bytes of the sector. This denotes the PSN of 30000.\n") 
+    print("Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. It determines this data by storing LBA 0 onto the cache and by bruteforcing various known commands that expose the cache in order to find the data that's stored. Data from LBA 0 should always start with '03 00 00' as the first 4 bytes of the sector. This denotes the PSN of 30000.\n") 
 
     # Ask the user for the drive letter of the DVD drive they want to read from.
     print("Enter the drive letter of your DVD drive: ")
@@ -307,9 +368,11 @@ def main():
         exit
 
     # Call the function to retrieve DVD drive information
+    print("\n---------------------------------------------------------------------------------\n")
     get_dvd_drive_info(drive_letter.upper())
 
     # Call function to return page 01 from mode sense. This will help determine default settings set on the drive.
+    print("\n---------------------------------------------------------------------------------\n")
     print("Checking MODE SENSE PAGE 01 (READ-WRITE ERROR RECOVERY) settings...:\n")
     get_mode_sense_page01(drive_letter)
 
@@ -321,24 +384,35 @@ def main():
     discovered_f1_files = scan_for_f1_values(drive_letter)
 
     # Return the results of the bruteforcing.
-    print("Possible commands that may be able to dump raw sector data:\n")
+    print("\n---------------------------------------------------------------------------------\n")
+    print("\nPossible commands that may be able to dump raw sector data:\n")
     print("3C (XX YY) - READ BUFFER")
     print("\n".join(discovered_3c_files))
     print("\n")
     print("F1 (XX)    - DEBUG COMMAND (Mediatek only?)")
     print("\n".join(discovered_f1_files))
-
-    # Todo: E7 command support
+    print("\n---------------------------------------------------------------------------------\n")
+    
+    # Check for E7 command support
+    print("\n---------------------------------------------------------------------------------\n")
     test_e7_command(drive_letter)
     
-    # Todo: 3E command support
+    # Check for 3E command support
     test_3e_read_long_10(drive_letter)
     
-    # Todo: 9E command support
+    # Check for 9E command support
     test_9e_read_long_16(drive_letter)
+    print("\n---------------------------------------------------------------------------------\n")
+	
+	# Attempt to dump PFI/DMI/BCA/etc from the disc. This is done last as doing this will put this on top of the cache
+    print("\n---------------------------------------------------------------------------------\n")
+    get_disc_info(drive_letter)
+    print("\n---------------------------------------------------------------------------------\n")
 
-    # TESTING: Calculate the possible sector size returned by the drive by returning the distance between the byte pattern 00 03 00 00 (PSN $30000, or the first LBA (0)) and byte pattern 00 03 00 01 (PSN $30001, or the second LBA (1)).
+    # Calculate the possible sector size returned by the drive by returning the distance between the byte pattern 03 00 00 (PSN $30000, or the first LBA (0)) and byte pattern 00 03 00 01 (PSN $30001, or the second LBA (1)).
     #           Do this on just the .bin files on the directory that have (16128) in the filename, as those will contain data for multiple raw sectors.
+    print("\n---------------------------------------------------------------------------------\n")
+    print("\nGetting list of sector sizes...\n")
     file_extension = ".bin"
     keyword = "(16128)"
     
@@ -351,7 +425,8 @@ def main():
         file_path = os.path.join(current_directory, file)
         bytes_found = calc_sector_size(file_path)
         print(f" File (SCSI Command): {file}\nPossible sector size: {bytes_found}\n")
-
+    print("\n---------------------------------------------------------------------------------\n")
+    
     # End
     print("\nScript finished!\n")
     # Call the function to create the zip file
