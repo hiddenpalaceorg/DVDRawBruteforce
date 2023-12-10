@@ -1,10 +1,10 @@
 # Raw DVD Drive sector reading Bruteforcer
-# Version: 2023-11-26
+# Version: 2023-12-10
 # Author: ehw
 # Hidden-Palace.org R&D
 # Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. 
 #              It determines this data by storing LBA 0 onto the cache and by bruteforcing various known commands that expose the cache in order to find the data that's stored.
-#              Data from LBA 0 should always start with "03 00 00" as the first 4 bytes of the sector. This denotes the PSN of 30000.
+#              Data from LBA 0 should always start with "03 00 00" as the first 3 bytes of the sector after the first byte in the beginning of the sector. This denotes the PSN of 30000.
 # Notes: Script has been written for use with Windows 10 x64 and Python 3.11.4.
 
 import subprocess
@@ -18,6 +18,8 @@ import zipfile
 import time
 import glob
 from tqdm import tqdm
+import signal
+from itertools import accumulate
 
 drive_letter = ""
 
@@ -33,6 +35,15 @@ class Logger(object):
 
     def flush(self):
         pass    
+
+class SkipException(Exception):
+    pass
+
+def keyboard_interrupt_handler(signal, frame):
+    raise SkipException("User interrupted the process. Skipping...")
+
+# Set up the interrupt handler
+signal.signal(signal.SIGINT, keyboard_interrupt_handler)
 
 sys.stdout = Logger()
 
@@ -73,74 +84,164 @@ def read_lba_0(drive_letter):
     execute_command(command)
 
 def scan_for_3c_values(drive_letter):
-    print("\nScanning for 3C values (THIS MAY TAKE A WHILE)...")
-    discovered_files = []
-    total_iterations = 256 * 256
-    progress_bar = tqdm(total=total_iterations, desc="Processing", position=0)
+    try:
+        print("\nScanning for 3C values (THIS MAY TAKE A WHILE)...")
+        discovered_3c_files = []  # Updated to store "3C XX YY" combinations
+        total_iterations = 256 * 256
+        progress_bar = tqdm(total=total_iterations, desc="Processing", position=0)
 
-    for xx in range(256):
-        for yy in range(256):
-            hex_combination = f"{xx:02X} {yy:02X}"
-            progress_bar.set_postfix(combination=hex_combination)
-            command = f"sg_raw.exe -o 3c_{xx:02X}_{yy:02X}.bin -r 2384 {drive_letter}: 3c {xx:02X} {yy:02X} 00 00 00 00 09 50 00 --timeout=20"
+        for xx in range(256):
+            for yy in range(256):
+                hex_combination = f"{xx:02X} {yy:02X}"
+                progress_bar.set_postfix(combination=hex_combination)
+                command = f"sg_raw.exe -o 3c_{xx:02X}_{yy:02X}.bin -r 2384 {drive_letter}: 3c {xx:02X} {yy:02X} 00 00 00 00 09 50 00 --timeout=20"
+                return_code, _, _ = execute_command(command)
+
+                filename = f"3c_{xx:02X}_{yy:02X}.bin"
+                try:
+                    with open(filename, "rb") as file:
+                        file.seek(1)  # Move the file pointer to offset 0x1
+                        bytes_at_offset_1 = file.read(3)
+                    if bytes_at_offset_1 == b"\x03\x00\x00":
+                        print(f"\nRaw sector data found with 3C {xx:02X} {yy:02X}")
+                        discovered_3c_files.append(hex_combination)
+                        command = f"sg_raw.exe -o 3c_{xx:02X}_{yy:02X}_(16128).bin -r 16128 {drive_letter}: 3c {xx:02X} {yy:02X} 00 00 00 00 3F 00 00 --timeout=20"  # make a 16kb dump for further analysis
+                        return_code, _, _ = execute_command(command)
+                    else:
+                        print(f"\nRaw sector data NOT found with 3C {xx:02X} {yy:02X}")
+                        command = f"sg_raw.exe -o 3c_{xx:02X}_{yy:02X}_(16128)_(no_sector_data).bin -r 16128 {drive_letter}: 3c {xx:02X} {yy:02X} 00 00 00 00 3F 00 00 --timeout=20"  # make a 16kb dump for further analysis
+                        return_code, _, _ = execute_command(command)
+                except FileNotFoundError:
+                    pass
+
+                # Update the progress bar
+                progress_bar.update(1)
+
+        # Close the progress bar
+        progress_bar.close()
+        return discovered_3c_files  # Return the list of "3C XX YY" combinations
+
+    except SkipException as e:
+        print(f"\nSkipping the current operation: {e}")
+        return []
+
+def mem_dump_3c(discovered_3c_files, drive_letter):
+    try:
+        # Generate an array with sums of 16128 starting from 0 and ending with 16773120
+        # This is technically the maximum amount that can be returned since the offset part of the CDB is only 3 bytes long
+        # but no drive should have more than 16mb of RAM.
+        start = 0
+        end = 16773120
+        step = 16128
+        array_size = (end // step) + 1
+
+        result_array = []
+
+        for i in range(array_size):
+            current_sum = start + (i * step)
+
+            # Format the sum as a fixed 3-byte hexadecimal number
+            hex_string = "{:06X}".format(current_sum)
+
+            # Split the hex string into 2-byte chunks
+            hex_chunks = [hex_string[j:j+2] for j in range(0, len(hex_string), 2)]
+
+            # Join the chunks with spaces and append to the result array
+            result_array.append(" ".join(hex_chunks))
+        
+        # Get the first element of "discovered_3c_files"
+        first_element = discovered_3c_files[0]
+
+        print(f"Attempting to dump the entirety of this drive's RAM by using {first_element}...")
+
+        # Loop 1040 times
+        total_iterations = 1040
+        progress_bar = tqdm(total=total_iterations, desc="Memory Dump Progress", position=0)
+
+        # Create a directory for temporary files
+        temp_directory = "memdump_temp"
+        os.makedirs(temp_directory, exist_ok=True)
+
+        # Loop through 1040 times
+        for loop_number in range(total_iterations):
+            # Construct the command for memory dump
+            command = (
+                f"sg_raw.exe -o \"{temp_directory}\\memdump_3c_{first_element}_{loop_number:04d}.bin\" "
+                f"-r 16128 {drive_letter}: 3C {first_element} {result_array[loop_number]} 00 3F 00 00 "
+                f" --timeout=20"
+            )
+            # Execute the command
             return_code, _, _ = execute_command(command)
 
-            filename = f"3c_{xx:02X}_{yy:02X}.bin"
+            # Update the progress bar
+            progress_bar.update(1)
+
+        # Close the progress bar
+        progress_bar.close()
+
+        # Combine the binary .bin files in sequential order of loop_number
+        combined_file_path = "combined_memdump.bin"
+        with open(combined_file_path, "wb") as combined_file:
+            for loop_number in range(total_iterations):
+                file_path = os.path.join(temp_directory, f"memdump_3c_{first_element}_{loop_number:04d}.bin")
+                with open(file_path, "rb") as temp_file:
+                    combined_file.write(temp_file.read())
+
+        print(f"\nMemory dump files successfully combined into: {combined_file_path}")
+
+    #todo: add exceptions for errors for missing files or when files dont get created. not sure if totally necessary, needs more testing.
+
+    except SkipException as e:
+        print(f"\nSkipping the current operation: {e}")
+
+    finally:
+        # Remove the temporary directory and its contents
+        shutil.rmtree(temp_directory, ignore_errors=True)
+
+def scan_for_f1_values(drive_letter):
+    try:
+        print("\nScanning for F1 values (THIS MAY TAKE A WHILE)...")
+        discovered_files = []
+        total_iterations = 256
+        progress_bar = tqdm(total=total_iterations, desc="Processing", position=0)
+
+        for xx in range(256):
+            hex_combination = f"{xx:02X}"
+            progress_bar.set_postfix(combination=hex_combination)
+
+            command = f"sg_raw.exe -o f1_{xx:02X}.bin -r 2384 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 09 50 --timeout=20"
+            return_code, _, _ = execute_command(command)
+
+            filename = f"f1_{xx:02X}.bin"
             try:
                 with open(filename, "rb") as file:
                     file.seek(1)  # Move the file pointer to offset 0x1
                     bytes_at_offset_1 = file.read(3)
                 if bytes_at_offset_1 == b"\x03\x00\x00":
-                    print(f"\nRaw sector data found with 3C {xx:02X} {yy:02X}")
-                    discovered_files.append(filename)
-                    command = f"sg_raw.exe -o 3c_{xx:02X}_{yy:02X}_(16128).bin -r 16128 {drive_letter}: 3c {xx:02X} {yy:02X} 00 00 00 00 3F 00 00 --timeout=20"  # make a 16kb dump for further analysis
+                    print(f"\nRaw sector data found with F1 {xx:02X}")
+                    # Dump the memory region with various sizes. I'm not too sure if all drives will like having to return a lot of data with F1 so I'm gonna try various sizes and see what comes back.
+                    command = f"sg_raw.exe -o f1_{xx:02X}_(16128).bin -r 16128 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 3F 00 --timeout=20"  # make a 16kb dump for further analysis (to get sector size)
                     return_code, _, _ = execute_command(command)
+                    discovered_files.append(filename)
                 else:
-                    print(f"\nRaw sector data NOT found with 3C {xx:02X} {yy:02X}")
+                    print(f"\nRaw sector data NOT found with F1 {xx:02X}")
+                    # Dump the memory region with various sizes. I'm not too sure if all drives will like having to return a lot of data with F1 so I'm gonna try various sizes and see what comes back.
+                    # Even though the memory region doesn't seem to contain data for sectors, dump the entire contents anyway for further analysis. Relevent disc information might be stored in individual memory pages.
+                    command = f"sg_raw.exe -o f1_{xx:02X}_(16128)_(no_sector_data).bin -r 16128 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 3F 00 --timeout=20"  # make a 16kb dump for further analysis (to get sector size)
+                    return_code, _, _ = execute_command(command)
             except FileNotFoundError:
                 pass
 
             # Update the progress bar
             progress_bar.update(1)
 
-    # Close the progress bar
-    progress_bar.close()
-    return discovered_files
+        # Close the progress bar
+        progress_bar.close()
+        return discovered_files
 
-def scan_for_f1_values(drive_letter):
-    print("\nScanning for F1 values (THIS MAY TAKE A WHILE)...")
-    discovered_files = []
-    total_iterations = 256
-    progress_bar = tqdm(total=total_iterations, desc="Processing", position=0)
-
-    for xx in range(256):
-        hex_combination = f"{xx:02X}"
-        progress_bar.set_postfix(combination=hex_combination)
-
-        command = f"sg_raw.exe -o f1_{xx:02X}.bin -r 2384 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 09 50 --timeout=20"
-        return_code, _, _ = execute_command(command)
-
-        filename = f"f1_{xx:02X}.bin"
-        try:
-            with open(filename, "rb") as file:
-                file.seek(1)  # Move the file pointer to offset 0x1
-                bytes_at_offset_1 = file.read(3)
-            if bytes_at_offset_1 == b"\x03\x00\x00":
-                print(f"\nRaw sector data found with F1 {xx:02X}")
-                command = f"sg_raw.exe -o f1_{xx:02X}_(16128).bin -r 16128 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 3F 00 --timeout=20"  # make a 16kb dump for further analysis
-                return_code, _, _ = execute_command(command)
-                discovered_files.append(filename)
-            else:
-                print(f"\nRaw sector data NOT found with F1 {xx:02X}")
-        except FileNotFoundError:
-            pass
-
-        # Update the progress bar
-        progress_bar.update(1)
-
-    # Close the progress bar
-    progress_bar.close()
-    return discovered_files
+    except SkipException as e:
+        print(f"\nSkipping the current operation: {e}")
+        return []
 
 def test_e7_command(drive_letter):
     print("\nTesting if E7 SCSI command (Hitachi Debug - Type 3/4 NO OFFSET) is supported...")
@@ -352,9 +453,9 @@ def main():
     start_time = time.time()
     # Start
     print("Raw DVD Drive sector reading Bruteforcer")
-    print("Version: 2023-11-26")
+    print("Version: 2023-12-10")
     print("Author: ehw (Hidden-Palace.org R&D)")
-    print("Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. It determines this data by storing LBA 0 onto the cache and by bruteforcing various known commands that expose the cache in order to find the data that's stored. Data from LBA 0 should always start with '03 00 00' as the first 4 bytes of the sector. This denotes the PSN of 30000.\n") 
+    print("Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. It determines this data by storing LBA 0 onto the cache and by bruteforcing various known commands that expose the cache in order to find the data that's stored. Data from LBA 0 should always start with '03 00 00' as the first 3 bytes of the sector after the the first byte. This denotes the PSN of 30000.\n") 
 
     # Ask the user for the drive letter of the DVD drive they want to read from.
     print("Enter the drive letter of your DVD drive: ")
@@ -387,7 +488,7 @@ def main():
     print("\n---------------------------------------------------------------------------------\n")
     print("\nPossible commands that may be able to dump raw sector data:\n")
     print("3C (XX YY) - READ BUFFER")
-    print("\n".join(discovered_3c_files))
+    print("\n".join(['3C ' + line for line in discovered_3c_files]))
     print("\n")
     print("F1 (XX)    - DEBUG COMMAND (Mediatek only?)")
     print("\n".join(discovered_f1_files))
@@ -403,7 +504,12 @@ def main():
     # Check for 9E command support
     test_9e_read_long_16(drive_letter)
     print("\n---------------------------------------------------------------------------------\n")
-	
+    
+    # Attempt to dump the entire drive's memory, or at least from the beginning of DRAM,  but using the first discovered 3C combination.
+    print("\n---------------------------------------------------------------------------------\n")
+    mem_dump_3c(discovered_3c_files, drive_letter)
+    print("\n---------------------------------------------------------------------------------\n")
+    
 	# Attempt to dump PFI/DMI/BCA/etc from the disc. This is done last as doing this will put this on top of the cache
     print("\n---------------------------------------------------------------------------------\n")
     get_disc_info(drive_letter)
