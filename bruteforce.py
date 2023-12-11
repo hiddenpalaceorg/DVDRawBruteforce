@@ -217,6 +217,7 @@ def scan_for_f1_values(drive_letter):
 
         signal.signal(signal.SIGINT, signal_handler)
 
+        #TODO: Might make it so that the first lba is read each time this loops, just in case one of the F1 commands alters something in cache.
         for xx in range(256):
             hex_combination = f"{xx:02X}"
             progress_bar.set_postfix(combination=hex_combination)
@@ -490,7 +491,16 @@ def main():
     read_lba_0(drive_letter)
     
     # Start scanning and discovering SCSI opcodes that work.
+    # Scan for 3C opcodes that return raw sector data.
     discovered_3c_files = scan_for_3c_values(drive_letter)
+    
+    # Attempt to dump the entire drive's memory, or at least from the beginning of DRAM,  but using the first discovered 3C combination.
+    # Call this here just in case any of the values that are bruteforced with F1 does something with the cache that alters sector data.
+    print("\n---------------------------------------------------------------------------------\n")
+    mem_dump_3c(discovered_3c_files, drive_letter)
+    print("\n---------------------------------------------------------------------------------\n")
+    
+    # Scan for F1 opcodes that reutrn raw sector data.
     discovered_f1_files = scan_for_f1_values(drive_letter)
 
     # Return the results of the bruteforcing.
@@ -503,6 +513,9 @@ def main():
     print("\n".join(discovered_f1_files))
     print("\n---------------------------------------------------------------------------------\n")
     
+    # Load LBA 0 (PSN 30000)'s data onto the cache again just in case a bruteforced F1 command did something to the cache.
+    read_lba_0(drive_letter)    
+    
     # Check for E7 command support
     print("\n---------------------------------------------------------------------------------\n")
     test_e7_command(drive_letter)
@@ -512,11 +525,6 @@ def main():
     
     # Check for 9E command support
     test_9e_read_long_16(drive_letter)
-    print("\n---------------------------------------------------------------------------------\n")
-    
-    # Attempt to dump the entire drive's memory, or at least from the beginning of DRAM,  but using the first discovered 3C combination.
-    print("\n---------------------------------------------------------------------------------\n")
-    mem_dump_3c(discovered_3c_files, drive_letter)
     print("\n---------------------------------------------------------------------------------\n")
     
 	# Attempt to dump PFI/DMI/BCA/etc from the disc. This is done last as doing this will put this on top of the cache
