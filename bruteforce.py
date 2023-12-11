@@ -1,5 +1,5 @@
 # Raw DVD Drive sector reading Bruteforcer
-# Version: 2023-12-11
+# Version: 2023-12-11a
 # Author: ehw
 # Hidden-Palace.org R&D
 # Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. 
@@ -14,12 +14,15 @@ import sys
 import os
 import shutil
 from datetime import datetime
-import zipfile
+#import zipfile
 import time
 import glob
 from tqdm import tqdm
 import signal
 from itertools import accumulate
+import py7zr
+import hashlib
+from collections import defaultdict
 
 drive_letter = ""
 
@@ -48,14 +51,14 @@ signal.signal(signal.SIGINT, keyboard_interrupt_handler)
 sys.stdout = Logger()
 
 def zip_files():
-    zip_filename = "upload_me.zip"
+    zip_filename = "upload_me.7z"
     files_to_zip = glob.glob("*.bin") + ["logfile.log"]
-    
-    with zipfile.ZipFile(zip_filename, "w") as zip_file:
+
+    with py7zr.SevenZipFile(zip_filename, 'w') as zip_file:
         for file in files_to_zip:
             zip_file.write(file)
     
-    print(f"Files zipped successfully into '{zip_filename}'. Please send this zip file for analysis.")
+    print(f"Files zipped successfully into '{zip_filename}'. Please send this 7z file for analysis.")
 
 def execute_command(command):
     with open('sg_raw_temp.txt', 'w') as output_file:
@@ -79,7 +82,7 @@ def dvd_drive_exists(drive_letter):
     return os.path.isdir(drive_path)
 
 def read_lba_0(drive_letter):
-    print("Reading LBA 0 to store on the cache")
+    print("\nReading LBA 0 to store on the cache")
     command = f"sg_raw.exe -o lba_0_2048.bin -r 2048 {drive_letter}: a8 00 00 00 00 00 00 00 00 01 00 00"
     execute_command(command)
 
@@ -157,7 +160,7 @@ def mem_dump_3c(discovered_3c_files, drive_letter):
         # Get the first element of "discovered_3c_files"
         first_element = discovered_3c_files[0]
 
-        print(f"Attempting to dump the entirety of this drive's RAM by using {first_element}...")
+        print(f"Attempting to dump the entirety of this drive's RAM by using 3C {first_element}...")
 
         # Loop 1040 times
         total_iterations = 1040
@@ -217,8 +220,9 @@ def scan_for_f1_values(drive_letter):
 
         signal.signal(signal.SIGINT, signal_handler)
 
-        #TODO: Might make it so that the first lba is read each time this loops, just in case one of the F1 commands alters something in cache.
         for xx in range(256):
+            # Note: Some values of F1 might modify parts of the cache. To make sure we don't modify where there's sector data, we reread LBA 0 each time we try a value for F1.
+            read_lba_0(drive_letter)
             hex_combination = f"{xx:02X}"
             progress_bar.set_postfix(combination=hex_combination)
 
@@ -458,12 +462,48 @@ def get_disc_info(drive_letter):
     command = f"sg_raw.exe -o disc_info_key.bin -r 2384 {drive_letter}: ad 00 00 00 00 00 00 02 00 04 00 00 --timeout=20"
     return_code, _, _ = execute_command(command)
 
+def get_file_hash(file_path):
+    hasher = hashlib.sha256()
+    with open(file_path, 'rb') as file:
+        while chunk := file.read(8192):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+def clean_up():
+    # Scan only the root directory for files with identical hashes,
+    # keeping the files that have matches but were created first.
+
+    print("Cleaning up duplicate files...")
+    file_hash_dict = defaultdict(list)
+
+    # Collect file paths and their hashes in the root directory
+    root_dir = os.getcwd()
+    for file in os.listdir(root_dir):
+        file_path = os.path.join(root_dir, file)
+        if os.path.isfile(file_path):
+            file_hash = get_file_hash(file_path)
+            file_hash_dict[file_hash].append(file_path)
+
+    # Keep the files that have matches but were created first
+    files_to_keep = set()
+    for file_list in file_hash_dict.values():
+        if len(file_list) > 1:
+            # Sort files by creation time, keep the first one
+            file_list.sort(key=lambda file_path: os.path.getctime(file_path))
+            files_to_keep.add(file_list[0])
+
+    # Delete duplicate files
+    for file_list in file_hash_dict.values():
+        for file_path in file_list[1:]:
+            if file_path not in files_to_keep:
+                os.remove(file_path)
+                print(f"Removed duplicate: {file_path}")
 
 def main():
     start_time = time.time()
     # Start
     print("Raw DVD Drive sector reading Bruteforcer")
-    print("Version: 2023-12-11")
+    print("Version: 2023-12-11a")
     print("Author: ehw (Hidden-Palace.org R&D)")
     print("Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. It determines this data by storing LBA 0 onto the cache and by bruteforcing various known commands that expose the cache in order to find the data that's stored. Data from LBA 0 should always start with '03 00 00' as the first 3 bytes of the sector after the the first byte. This denotes the PSN of 30000.\n") 
 
@@ -547,8 +587,14 @@ def main():
     for file in matching_files:
         file_path = os.path.join(current_directory, file)
         bytes_found = calc_sector_size(file_path)
-        print(f" File (SCSI Command): {file}\nPossible sector size: {bytes_found}\n")
+        sha256_hash = get_file_hash(file_path)
+        print(f" File (SCSI Command): {file}\nPossible sector size: {bytes_found}\nSHA256 Hash: {sha256_hash}\n")
     print("\n---------------------------------------------------------------------------------\n")
+    
+	# Clean up the directory of duplicate files, saving the files with the same hash that were created first.
+    print("\n---------------------------------------------------------------------------------\n")
+    clean_up()
+    print("\n---------------------------------------------------------------------------------\n")    
     
     # End
     print("\nScript finished!\n")
@@ -567,7 +613,7 @@ def main():
     # Move all the .bin files to a folder named after the current time, this will prevent users from accidentally running the script again and mixing the files up in different runs from different drives.
     current_dir = os.getcwd()
     new_dir = create_new_directory()
-    files_to_move = [".bin", "logfile.log", "upload_me.zip"]
+    files_to_move = [".bin", "logfile.log", "upload_me.7z"]
 
     for file in os.listdir(current_dir):
         if file.endswith(tuple(files_to_move)) and os.path.isfile(file):
