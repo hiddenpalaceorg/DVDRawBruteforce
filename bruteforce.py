@@ -1,5 +1,5 @@
 # Raw DVD Drive sector reading Bruteforcer
-# Version: 2023-12-10
+# Version: 2023-12-11
 # Author: ehw
 # Hidden-Palace.org R&D
 # Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. 
@@ -90,6 +90,11 @@ def scan_for_3c_values(drive_letter):
         total_iterations = 256 * 256
         progress_bar = tqdm(total=total_iterations, desc="Processing", position=0)
 
+        def signal_handler(sig, frame):
+            raise SkipException("Ctrl+C pressed. Skipping the current operation.")
+
+        signal.signal(signal.SIGINT, signal_handler)
+
         for xx in range(256):
             for yy in range(256):
                 hex_combination = f"{xx:02X} {yy:02X}"
@@ -123,7 +128,7 @@ def scan_for_3c_values(drive_letter):
 
     except SkipException as e:
         print(f"\nSkipping the current operation: {e}")
-        return []
+        return discovered_3c_files  # Return the current state of the function
 
 def mem_dump_3c(discovered_3c_files, drive_letter):
     try:
@@ -184,12 +189,14 @@ def mem_dump_3c(discovered_3c_files, drive_letter):
         with open(combined_file_path, "wb") as combined_file:
             for loop_number in range(total_iterations):
                 file_path = os.path.join(temp_directory, f"memdump_3c_{first_element}_{loop_number:04d}.bin")
-                with open(file_path, "rb") as temp_file:
-                    combined_file.write(temp_file.read())
+
+                try:
+                    with open(file_path, "rb") as temp_file:
+                        combined_file.write(temp_file.read())
+                except FileNotFoundError:
+                    break
 
         print(f"\nMemory dump files successfully combined into: {combined_file_path}")
-
-    #todo: add exceptions for errors for missing files or when files dont get created. not sure if totally necessary, needs more testing.
 
     except SkipException as e:
         print(f"\nSkipping the current operation: {e}")
@@ -205,6 +212,11 @@ def scan_for_f1_values(drive_letter):
         total_iterations = 256
         progress_bar = tqdm(total=total_iterations, desc="Processing", position=0)
 
+        def signal_handler(sig, frame):
+            raise SkipException("Ctrl+C pressed. Skipping the current operation.")
+
+        signal.signal(signal.SIGINT, signal_handler)
+
         for xx in range(256):
             hex_combination = f"{xx:02X}"
             progress_bar.set_postfix(combination=hex_combination)
@@ -219,14 +231,11 @@ def scan_for_f1_values(drive_letter):
                     bytes_at_offset_1 = file.read(3)
                 if bytes_at_offset_1 == b"\x03\x00\x00":
                     print(f"\nRaw sector data found with F1 {xx:02X}")
-                    # Dump the memory region with various sizes. I'm not too sure if all drives will like having to return a lot of data with F1 so I'm gonna try various sizes and see what comes back.
                     command = f"sg_raw.exe -o f1_{xx:02X}_(16128).bin -r 16128 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 3F 00 --timeout=20"  # make a 16kb dump for further analysis (to get sector size)
                     return_code, _, _ = execute_command(command)
                     discovered_files.append(filename)
                 else:
                     print(f"\nRaw sector data NOT found with F1 {xx:02X}")
-                    # Dump the memory region with various sizes. I'm not too sure if all drives will like having to return a lot of data with F1 so I'm gonna try various sizes and see what comes back.
-                    # Even though the memory region doesn't seem to contain data for sectors, dump the entire contents anyway for further analysis. Relevent disc information might be stored in individual memory pages.
                     command = f"sg_raw.exe -o f1_{xx:02X}_(16128)_(no_sector_data).bin -r 16128 {drive_letter}: f1 {xx:02X} 00 00 00 00 00 00 3F 00 --timeout=20"  # make a 16kb dump for further analysis (to get sector size)
                     return_code, _, _ = execute_command(command)
             except FileNotFoundError:
@@ -241,7 +250,7 @@ def scan_for_f1_values(drive_letter):
 
     except SkipException as e:
         print(f"\nSkipping the current operation: {e}")
-        return []
+        return discovered_files  # Return the current state of the function
 
 def test_e7_command(drive_letter):
     print("\nTesting if E7 SCSI command (Hitachi Debug - Type 3/4 NO OFFSET) is supported...")
@@ -453,7 +462,7 @@ def main():
     start_time = time.time()
     # Start
     print("Raw DVD Drive sector reading Bruteforcer")
-    print("Version: 2023-12-10")
+    print("Version: 2023-12-11")
     print("Author: ehw (Hidden-Palace.org R&D)")
     print("Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. It determines this data by storing LBA 0 onto the cache and by bruteforcing various known commands that expose the cache in order to find the data that's stored. Data from LBA 0 should always start with '03 00 00' as the first 3 bytes of the sector after the the first byte. This denotes the PSN of 30000.\n") 
 
