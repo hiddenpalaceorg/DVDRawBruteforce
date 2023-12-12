@@ -133,6 +133,8 @@ def scan_for_3c_values(drive_letter):
         return discovered_3c_files  # Return the current state of the function
 
 def mem_dump_3c(discovered_3c_files, drive_letter):
+    # Reread LBA 0 because apparently there are values of 'read' buff that can actually alter the cache too! Yay!
+    read_lba_0(drive_letter)
     # Check if discovered_3c_files is empty
     if not discovered_3c_files:
        print("No values discovered for 3C. Skipping memory dump with 3C...")
