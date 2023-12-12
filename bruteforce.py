@@ -1,5 +1,5 @@
 # Raw DVD Drive sector reading Bruteforcer
-# Version: 2023-12-11a
+# Version: 2023-12-12
 # Author: ehw
 # Hidden-Palace.org R&D
 # Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. 
@@ -14,7 +14,6 @@ import sys
 import os
 import shutil
 from datetime import datetime
-#import zipfile
 import time
 import glob
 from tqdm import tqdm
@@ -134,6 +133,10 @@ def scan_for_3c_values(drive_letter):
         return discovered_3c_files  # Return the current state of the function
 
 def mem_dump_3c(discovered_3c_files, drive_letter):
+    # Check if discovered_3c_files is empty
+    if not discovered_3c_files:
+       print("No values discovered for 3C. Skipping memory dump with 3C...")
+       return
     try:
         # Generate an array with sums of 16128 starting from 0 and ending with 16773120
         # This is technically the maximum amount that can be returned since the offset part of the CDB is only 3 bytes long
@@ -503,7 +506,7 @@ def main():
     start_time = time.time()
     # Start
     print("Raw DVD Drive sector reading Bruteforcer")
-    print("Version: 2023-12-11a")
+    print("Version: 2023-12-12")
     print("Author: ehw (Hidden-Palace.org R&D)")
     print("Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. It determines this data by storing LBA 0 onto the cache and by bruteforcing various known commands that expose the cache in order to find the data that's stored. Data from LBA 0 should always start with '03 00 00' as the first 3 bytes of the sector after the the first byte. This denotes the PSN of 30000.\n") 
 
