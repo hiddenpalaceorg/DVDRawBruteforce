@@ -1,5 +1,5 @@
 # Raw DVD Drive sector reading Bruteforcer
-# Version: 2023-12-12
+# Version: 2023-12-12a
 # Author: ehw
 # Hidden-Palace.org R&D
 # Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. 
@@ -508,7 +508,7 @@ def main():
     start_time = time.time()
     # Start
     print("Raw DVD Drive sector reading Bruteforcer")
-    print("Version: 2023-12-12")
+    print("Version: 2023-12-12a")
     print("Author: ehw (Hidden-Palace.org R&D)")
     print("Description: Bruteforces various 0x3C and 0xF1 SCSI parameters (as well as checking for 0xE7, 0x3E, and 0x9E) to expose parts of the cache that might potentially store raw DVD sector data. It determines this data by storing LBA 0 onto the cache and by bruteforcing various known commands that expose the cache in order to find the data that's stored. Data from LBA 0 should always start with '03 00 00' as the first 3 bytes of the sector after the the first byte. This denotes the PSN of 30000.\n") 
 
